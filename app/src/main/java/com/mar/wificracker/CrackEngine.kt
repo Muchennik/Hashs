@@ -31,6 +31,7 @@ class CrackEngine(
 
     fun run(reader: BufferedReader, total: Long, resumeFrom: Long, listener: Listener) {
         val groups = targets.groupBy { Hex.encode(it.ssidBytes) }
+        val groupList = groups.entries.map { Pair(Hex.decode(it.key), it.value) }
         val solved = ConcurrentHashMap<Target, String>()
         val tried = AtomicLong(0)
         val current = AtomicReference("")
@@ -80,21 +81,23 @@ class CrackEngine(
                         }
                         if (buf.isEmpty()) break
                         chunkLen[start] = buf.size
+                        var lastPw = ""
                         for (pwRaw in buf) {
                             if (stop.get()) break
                             val pw = pwRaw.trimEnd('\r', '\n')
                             tried.incrementAndGet()
                             if (pw.length !in 8..63) continue
-                            current.set(pw)
-                            for ((ssidHex, tlist) in groups) {
-                                val unsolved = tlist.filter { !solved.containsKey(it) }
-                                if (unsolved.isEmpty()) continue
-                                val ssidB = Hex.decode(ssidHex)
+                            lastPw = pw
+                            for ((ssidB, tlist) in groupList) {
+                                var anyUnsolved = false
+                                for (t in tlist) if (!solved.containsKey(t)) { anyUnsolved = true; break }
+                                if (!anyUnsolved) continue
                                 val pmk = if (fastOk && Crypto.isAscii(pw)) Crypto.pmkFast(pw, ssidB) else Crypto.pmk(pw, ssidB)
-                                for (t in unsolved) if (check(t, pmk)) { solved[t] = pw; listener.onFound(t, pw) }
+                                for (t in tlist) if (!solved.containsKey(t) && check(t, pmk)) { solved[t] = pw; listener.onFound(t, pw) }
                             }
                             if (solved.size == targets.size) { stop.set(true); break }
                         }
+                        current.set(lastPw)
                         // отметить чанк завершённым и продвинуть committed по сплошному префиксу
                         if (!stop.get()) {
                             doneStarts.add(start)

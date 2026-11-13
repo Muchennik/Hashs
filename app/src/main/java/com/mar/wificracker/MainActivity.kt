@@ -39,6 +39,7 @@ class MainActivity : ComponentActivity() {
     private val solvedNow = HashMap<String, String>()
     private var crackLog: TextView? = null
     private var curKey: String = ""
+    private var lastSave = 0L
 
     private val pickCapture = registerForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
         u?.let { importCapture(it) }
@@ -282,7 +283,8 @@ class MainActivity : ComponentActivity() {
                     val reader = BufferedReader(InputStreamReader(ins, Charsets.UTF_8), 1 shl 20)
                     eng.run(reader, total, resumeFrom, object : CrackEngine.Listener {
                         override fun onProgress(tried: Long, speed: Long, current: String, tot: Long, elapsedMs: Long, committed: Long) {
-                            store.setPos(key, committed)
+                            val now = System.currentTimeMillis()
+                            if (now - lastSave > 5000) { store.setPos(key, committed); lastSave = now }
                             ui.post { crackLog?.text = buildPanel(tgts, tried, speed, current, tot, elapsedMs, false, committed) }
                         }
                         override fun onFound(target: Target, password: String) {
