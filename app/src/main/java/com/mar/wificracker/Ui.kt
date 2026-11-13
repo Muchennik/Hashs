@@ -14,7 +14,7 @@ object Ui {
     const val BG = 0xFF0E1116.toInt()
     const val SURFACE = 0xFF171B21.toInt()
     const val SURFACE2 = 0xFF1F2530.toInt()
-    const val ACCENT = 0xFF2DD4BF.toInt()
+    const val ACCENT = 0xFFFF8A2B.toInt()
     const val TEXT = 0xFFE6EDF3.toInt()
     const val SUB = 0xFF8B98A5.toInt()
     const val OK = 0xFF3FB950.toInt()
@@ -35,7 +35,7 @@ object Ui {
         return l
     }
 
-    fun button(ctx: Context, text: String, color: Int = ACCENT, textColor: Int = 0xFF08221F.toInt()): Button {
+    fun button(ctx: Context, text: String, color: Int = ACCENT, textColor: Int = 0xFF241200.toInt()): Button {
         val b = Button(ctx); b.text = text; b.isAllCaps = false
         b.setTextColor(textColor); b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
         val bg = GradientDrawable(); bg.cornerRadius = ctx.dp(12).toFloat(); bg.setColor(color)

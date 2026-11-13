@@ -31,6 +31,9 @@ class MainActivity : ComponentActivity() {
     private var engine: CrackEngine? = null
     private var running = false
     private var tab = 0
+    private var rootAvailable = false
+    private var rootChecked = false
+    private var scanning = false
 
     // aircrack-панель состояние
     private val solvedNow = HashMap<String, String>()
@@ -81,6 +84,11 @@ class MainActivity : ComponentActivity() {
         root.addView(content, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         setContentView(root)
         render()
+        thread {
+            rootAvailable = RootScan.hasRoot(); rootChecked = true
+            ui.post { render() }
+            if (rootAvailable) scanChroot(auto = true)
+        }
     }
 
     private fun render() {
@@ -109,7 +117,19 @@ class MainActivity : ComponentActivity() {
         val bClr = Ui.button(this, "Очистить", Ui.SURFACE2, Ui.DANGER)
         bClr.setOnClickListener { store.clearHashes(); selected.clear(); render() }
         bar.addView(bImp, flex()); bar.addView(space()); bar.addView(bExp, flex()); bar.addView(space()); bar.addView(bClr, flex())
-        col.addView(bar); col.addView(gap(10))
+        col.addView(bar); col.addView(gap(8))
+
+        // root-скан chroot
+        val rootLine = if (!rootChecked) "Проверка root…"
+            else if (rootAvailable) "Root есть — вижу файлы wifite из chroot"
+            else "Root не найден — только ручной импорт"
+        col.addView(Ui.tv(this, rootLine, 12f, if (rootAvailable) Ui.OK else Ui.SUB))
+        if (rootAvailable) {
+            val bScan = Ui.button(this, if (scanning) "Сканирую…" else "Сканировать chroot (hs/)")
+            bScan.setOnClickListener { scanChroot(false) }
+            col.addView(gap(6)); col.addView(bScan)
+        }
+        col.addView(gap(10))
 
         if (store.hashes.isEmpty()) {
             col.addView(Ui.tv(this, "Пусто. Импортируй .cap / .hc22000 / .22000 / .16800 от wifite.", 13f, Ui.SUB))
@@ -164,6 +184,32 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) { toast("Ошибка экспорта: ${e.message}") }
     }
 
+
+    private fun scanChroot(auto: Boolean = false) {
+        if (scanning) return
+        if (!rootAvailable) { if (!auto) toast("Root не найден — только ручной импорт"); return }
+        scanning = true; if (!auto) toast("Сканирую chroot…")
+        thread {
+            var added = 0; var files = 0
+            try {
+                for (path in RootScan.findFiles()) {
+                    val bytes = RootScan.readFile(path) ?: continue
+                    files++
+                    val name = path.substringAfterLast('/')
+                    val head = String(bytes.copyOf(minOf(bytes.size, 16)), Charsets.ISO_8859_1)
+                    var list = if (head.startsWith("WPA*") || name.endsWith(".hc22000") || name.endsWith(".22000") || name.endsWith(".16800"))
+                        Hc22000Parser.parse(String(bytes, Charsets.UTF_8)) else PcapParser.parse(bytes)
+                    if (list.isEmpty()) list = try { PcapParser.parse(bytes) } catch (_: Exception) {
+                        try { Hc22000Parser.parse(String(bytes, Charsets.UTF_8)) } catch (_: Exception) { emptyList() }
+                    }
+                    added += store.addTargets(list.map { it.copy(source = "chroot:" + name) })
+                }
+            } catch (_: Exception) {}
+            scanning = false
+            ui.post { toast("Скан chroot: файлов $files, новых хешей $added"); render() }
+        }
+    }
+
     // ---------- вкладка ПЕРЕБОР ----------
     private fun renderCrack(col: LinearLayout) {
         val pick = Ui.card(this)
@@ -177,7 +223,7 @@ class MainActivity : ComponentActivity() {
         val info = Ui.tv(this, "Выбрано хешей: $selCount" + if (selCount==0) " (отметь на вкладке «Хеши»)" else "", 13f, if (selCount==0) Ui.HS else Ui.SUB)
         col.addView(info); col.addView(gap(8))
 
-        val bStart = Ui.button(this, if (running) "Стоп" else "Старт перебор", if (running) Ui.DANGER else Ui.ACCENT, if (running) 0xFF2A0E0C.toInt() else 0xFF08221F.toInt())
+        val bStart = Ui.button(this, if (running) "Стоп" else "Старт перебор", if (running) Ui.DANGER else Ui.ACCENT, if (running) 0xFF2A0E0C.toInt() else 0xFF241200.toInt())
         bStart.setOnClickListener { if (running) stopCrack() else startCrack() }
         col.addView(bStart); col.addView(gap(10))
 
