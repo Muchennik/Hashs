@@ -9,11 +9,13 @@ import java.io.File
 class Store(ctx: Context) {
     private val hashesFile = File(ctx.filesDir, "hashes.json")
     private val crackedFile = File(ctx.filesDir, "cracked.json")
+    private val progressFile = File(ctx.filesDir, "progress.json")
 
     val hashes = LinkedHashMap<String, Target>()   // id -> Target
     val cracked = ArrayList<Cracked>()
+    val progress = HashMap<String, Long>()
 
-    init { loadHashes(); loadCracked() }
+    init { loadHashes(); loadCracked(); loadProgress() }
 
     fun addTargets(list: List<Target>): Int {
         var added = 0
@@ -29,6 +31,19 @@ class Store(ctx: Context) {
         }
     }
     fun clearCracked() { cracked.clear(); saveCracked() }
+
+    // --- позиции перебора (resume) ---
+    fun getPos(key: String): Long = progress[key] ?: 0L
+    fun setPos(key: String, pos: Long) { progress[key] = pos; saveProgress() }
+    fun clearPos(key: String) { if (progress.remove(key) != null) saveProgress() }
+    private fun saveProgress() {
+        val o = JSONObject(); for ((k, v) in progress) o.put(k, v); progressFile.writeText(o.toString())
+    }
+    private fun loadProgress() {
+        if (!progressFile.exists()) return
+        try { val o = JSONObject(progressFile.readText()); val it = o.keys()
+            while (it.hasNext()) { val k = it.next(); progress[k] = o.getLong(k) } } catch (_: Exception) {}
+    }
 
     // --- hc22000 экспорт ---
     fun exportHc22000(ids: Collection<String>? = null): String {

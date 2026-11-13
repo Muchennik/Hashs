@@ -38,6 +38,7 @@ class MainActivity : ComponentActivity() {
     // aircrack-панель состояние
     private val solvedNow = HashMap<String, String>()
     private var crackLog: TextView? = null
+    private var curKey: String = ""
 
     private val pickCapture = registerForActivityResult(ActivityResultContracts.OpenDocument()) { u ->
         u?.let { importCapture(it) }
@@ -225,7 +226,28 @@ class MainActivity : ComponentActivity() {
 
         val bStart = Ui.button(this, if (running) "Стоп" else "Старт перебор", if (running) Ui.DANGER else Ui.ACCENT, if (running) 0xFF2A0E0C.toInt() else 0xFF241200.toInt())
         bStart.setOnClickListener { if (running) stopCrack() else startCrack() }
-        col.addView(bStart); col.addView(gap(10))
+        col.addView(bStart); col.addView(gap(6))
+
+        // сброс сохранённой позиции
+        val bReset = Ui.button(this, "Сбросить позицию (с нуля)", Ui.SURFACE2, Ui.TEXT)
+        bReset.setOnClickListener {
+            val wl = wordlistUri
+            val tgts = store.hashes.values.filter { selected.contains(it.id) }
+            if (wl == null || tgts.isEmpty()) { toast("Выбери словарь и хеши"); return@setOnClickListener }
+            store.clearPos(crackKey(wl, tgts.map { it.id })); toast("Позиция сброшена — старт будет с начала")
+        }
+        col.addView(bReset); col.addView(gap(6))
+
+        // показать сохранённую позицию, если есть
+        run {
+            val wl = wordlistUri
+            val tgts = store.hashes.values.filter { selected.contains(it.id) }
+            if (wl != null && tgts.isNotEmpty()) {
+                val pos = store.getPos(crackKey(wl, tgts.map { it.id }))
+                if (pos > 0) col.addView(Ui.tv(this, "Сохранённая позиция: ${"%,d".format(pos)} — продолжит отсюда", 12f, Ui.ACCENT))
+            }
+        }
+        col.addView(gap(10))
 
         val panel = Ui.card(this)
         val log = Ui.tv(this, aircrackHeader(), 12f, Ui.TEXT)
@@ -238,14 +260,19 @@ class MainActivity : ComponentActivity() {
     private fun aircrackHeader(): String =
         "ожидание…\n\nвыбери словарь и отмеченные хеши,\nзатем «Старт перебор»."
 
+    private fun crackKey(wl: Uri, ids: List<String>) =
+        wl.toString() + "|" + ids.sorted().joinToString(",")
+
     private fun startCrack() {
         val wl = wordlistUri ?: run { toast("Выбери словарь"); return }
         val tgts = store.hashes.values.filter { selected.contains(it.id) }
         if (tgts.isEmpty()) { toast("Отметь хеши на вкладке «Хеши»"); return }
+        val key = crackKey(wl, tgts.map { it.id }); curKey = key
+        val resumeFrom = store.getPos(key)
         running = true; solvedNow.clear(); render()
+        if (resumeFrom > 0) toast("Продолжаю с позиции ${"%,d".format(resumeFrom)}")
         val eng = CrackEngine(tgts); engine = eng
         thread {
-            // посчитать строки для %
             var total = 0L
             try { contentResolver.openInputStream(wl)!!.use { ins ->
                 val br = BufferedReader(InputStreamReader(ins), 1 shl 20); while (br.readLine()!=null) total++
@@ -253,19 +280,22 @@ class MainActivity : ComponentActivity() {
             try {
                 contentResolver.openInputStream(wl)!!.use { ins ->
                     val reader = BufferedReader(InputStreamReader(ins, Charsets.UTF_8), 1 shl 20)
-                    eng.run(reader, total, object : CrackEngine.Listener {
-                        override fun onProgress(tried: Long, speed: Long, current: String, tot: Long, elapsedMs: Long) {
-                            ui.post { crackLog?.text = buildPanel(tgts, tried, speed, current, tot, elapsedMs, false) }
+                    eng.run(reader, total, resumeFrom, object : CrackEngine.Listener {
+                        override fun onProgress(tried: Long, speed: Long, current: String, tot: Long, elapsedMs: Long, committed: Long) {
+                            store.setPos(key, committed)
+                            ui.post { crackLog?.text = buildPanel(tgts, tried, speed, current, tot, elapsedMs, false, committed) }
                         }
                         override fun onFound(target: Target, password: String) {
                             solvedNow[target.id] = password
                             store.addCracked(Cracked(target.essid, target.apMacStr, target.typeStr, password))
                             ui.post { toast("НАЙДЕН: ${target.essid} = $password") }
                         }
-                        override fun onDone(tried: Long, foundCount: Int, elapsedMs: Long) {
+                        override fun onDone(tried: Long, foundCount: Int, elapsedMs: Long, committed: Long, exhausted: Boolean) {
+                            if (exhausted) store.clearPos(key) else store.setPos(key, committed)
                             ui.post {
-                                crackLog?.text = buildPanel(tgts, tried, 0, "", tried, elapsedMs, true) +
-                                    "\n\nГотово. Найдено паролей: $foundCount"
+                                crackLog?.text = buildPanel(tgts, tried, 0, "", tried, elapsedMs, true, committed) +
+                                    (if (exhausted) "\n\nГотово. Найдено паролей: $foundCount"
+                                     else "\n\nОстановлено на ${"%,d".format(committed)}. Продолжу с этого места.")
                                 running = false; render()
                             }
                         }
@@ -278,7 +308,7 @@ class MainActivity : ComponentActivity() {
 
     private fun stopCrack() { engine?.requestStop(); toast("Остановка…") }
 
-    private fun buildPanel(tgts: List<Target>, tried: Long, speed: Long, current: String, total: Long, elapsedMs: Long, done: Boolean): String {
+    private fun buildPanel(tgts: List<Target>, tried: Long, speed: Long, current: String, total: Long, elapsedMs: Long, done: Boolean, committed: Long): String {
         val pct = if (total > 0) (tried * 100.0 / total) else 0.0
         val eta = if (speed > 0 && total > tried) fmtTime(((total - tried) / speed) * 1000) else "—"
         val sb = StringBuilder()
@@ -288,7 +318,8 @@ class MainActivity : ComponentActivity() {
         if (total > 0) sb.append(" / ${"%,d".format(total)}  (${"%.1f".format(pct)}%)")
         sb.append("\n")
         sb.append("Скорость: ${"%,d".format(speed)} кл/с     ETA: $eta\n")
-        sb.append("Текущий: ${current.take(32)}\n\n")
+        sb.append("Текущий: ${current.take(32)}\n")
+        sb.append("Чекпоинт: ${"%,d".format(committed)}\n\n")
         sb.append("Цели:\n")
         for (t in tgts) {
             val pw = solvedNow[t.id]
