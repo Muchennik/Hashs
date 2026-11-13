@@ -32,6 +32,7 @@ class CrackEngine(
         val pool = Executors.newFixedThreadPool(threads)
         val latch = CountDownLatch(threads)
         val tStart = System.currentTimeMillis()
+        val fastOk = Crypto.fastPathOk()
 
         Thread {
             var last = 0L; var lastT = tStart
@@ -64,7 +65,8 @@ class CrackEngine(
                             for ((ssidHex, tlist) in groups) {
                                 val unsolved = tlist.filter { !solved.containsKey(it) }
                                 if (unsolved.isEmpty()) continue
-                                val pmk = Crypto.pmk(pw, Hex.decode(ssidHex))
+                                val ssidB = Hex.decode(ssidHex)
+                                val pmk = if (fastOk && Crypto.isAscii(pw)) Crypto.pmkFast(pw, ssidB) else Crypto.pmk(pw, ssidB)
                                 for (t in unsolved) if (check(t, pmk)) {
                                     solved[t] = pw; listener.onFound(t, pw)
                                 }

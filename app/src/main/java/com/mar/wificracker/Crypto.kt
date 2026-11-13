@@ -1,6 +1,8 @@
 package com.mar.wificracker
 
 import javax.crypto.Mac
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
@@ -40,9 +42,24 @@ object Crypto {
         return out.copyOf(dkLen)
     }
 
-    /** PMK = PBKDF2(passphrase, ssid, 4096, 32). */
+    /** PMK = PBKDF2(passphrase, ssid, 4096, 32) — точный ручной путь (UTF-8). */
     fun pmk(passphrase: String, ssid: ByteArray): ByteArray =
         pbkdf2Sha1(passphrase.toByteArray(Charsets.UTF_8), ssid, 4096, 32)
+
+    // быстрый путь: весь PBKDF2 одним нативным вызовом Conscrypt (BoringSSL, HW SHA1)
+    private val skfTL = ThreadLocal.withInitial { SecretKeyFactory.getInstance("PBKDF2WithHmacSHA1") }
+    fun pmkFast(passphrase: String, ssid: ByteArray): ByteArray {
+        val spec = PBEKeySpec(passphrase.toCharArray(), ssid, 4096, 256)
+        return skfTL.get().generateSecret(spec).encoded
+    }
+
+    /** true если строка чисто ASCII — тогда быстрый путь совпадает с ручным. */
+    fun isAscii(s: String): Boolean { for (c in s) if (c.code > 127) return false; return true }
+
+    /** Самопроверка: быстрый PMK == ручной PMK на ASCII-векторе. */
+    fun fastPathOk(): Boolean = try {
+        pmkFast("password", "salt1234".toByteArray()).contentEquals(pmk("password", "salt1234".toByteArray()))
+    } catch (_: Exception) { false }
 
     /** PMKID = HMAC-SHA1(PMK, "PMK Name" | AP | STA)[0:16]. */
     fun pmkid(pmk: ByteArray, apMac: ByteArray, staMac: ByteArray): ByteArray {
