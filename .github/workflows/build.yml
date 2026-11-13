@@ -1,6 +1,12 @@
 name: build-apk
 on:
   push:
+    paths:
+      - 'app/**'
+      - '*.gradle*'
+      - 'settings.gradle*'
+      - 'gradle/**'
+      - '.github/workflows/build.yml'
   workflow_dispatch:
 
 permissions:
