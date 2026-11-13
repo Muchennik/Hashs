@@ -11,11 +11,12 @@ import java.io.InputStreamReader
  */
 object RootScan {
 
-    private val ROOTS = listOf(
-        "/data/local/nhsystem",                       // NetHunter kali chroot
-        "/data/local/kali-arm64", "/data/local/kalifs",
-        "/data/data/com.offsec.nethunter/files",
-        "/sdcard", "/storage/emulated/0"
+    // Узкие корни: /data/local (chroot, маленький) сканируем глубоко,
+    // на sdcard — только явные папки, чтобы не ползать по всему хранилищу.
+    private val DEEP_ROOTS = listOf("/data/local", "/data/data/com.offsec.nethunter/files")
+    private val SHALLOW_ROOTS = listOf(
+        "/sdcard/hs", "/sdcard/wifite", "/sdcard/kali", "/sdcard/Download", "/sdcard/Download/hs",
+        "/storage/emulated/0/hs", "/storage/emulated/0/wifite", "/storage/emulated/0/Download"
     )
     private val EXT = listOf("cap", "pcap", "pcapng", "hc22000", "22000", "16800")
 
@@ -26,12 +27,16 @@ object RootScan {
         out.contains("uid=0")
     } catch (_: Exception) { false }
 
-    /** Найти файлы хешей (через su find). */
+    /** Найти файлы хешей (через su find). Быстро: узкие корни + prune тяжёлых папок. */
     fun findFiles(): List<String> {
         val nameExpr = EXT.joinToString(" -o ") { "-iname '*.$it'" }
-        val roots = ROOTS.joinToString(" ")
-        val cmd = "find $roots -maxdepth 7 -type f \\( $nameExpr \\) 2>/dev/null"
-        return runSu(cmd).lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+        val deep = DEEP_ROOTS.joinToString(" ")
+        val shallow = SHALLOW_ROOTS.joinToString(" ")
+        // глубоко по chroot (до 6), мелко по явным папкам sdcard (до 3)
+        val cmd =
+            "find $deep -maxdepth 6 -type f \\( $nameExpr \\) 2>/dev/null; " +
+            "find $shallow -maxdepth 3 -type f \\( $nameExpr \\) 2>/dev/null"
+        return runSu(cmd).lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.distinct().toList()
     }
 
     /** Прочитать файл через su + base64. */
