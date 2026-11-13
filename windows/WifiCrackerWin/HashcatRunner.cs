@@ -68,10 +68,46 @@ public class HashcatRunner
             proc.WaitForExit();
             Thread.Sleep(300);
             ReadCracked(outFile, targets, seenCracked);
+            CollectShow(hashcatPath, hashFile, potFile, targets, seenCracked);
             OnDone?.Invoke(proc.ExitCode, stop ? "остановлено" : "hashcat завершил");
         }
         catch (Exception ex) { OnDone?.Invoke(-1, "не удалось запустить hashcat: " + ex.Message); }
         finally { watcher.Dispose(); }
+    }
+
+    // Достаёт ВСЕ взломанные пары из potfile через `hashcat --show` (включая найденные ранее).
+    void CollectShow(string hashcatPath, string hashFile, string potFile, IList<Target> targets, HashSet<string> seen)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = hashcatPath,
+                WorkingDirectory = Path.GetDirectoryName(hashcatPath) ?? Path.GetTempPath(),
+                RedirectStandardOutput = true, RedirectStandardError = true,
+                UseShellExecute = false, CreateNoWindow = true
+            };
+            foreach (var a in new[] { "-m", "22000", "-a", "0", "--show", "--potfile-path", potFile, "--outfile-format", "3", "--quiet", hashFile })
+                psi.ArgumentList.Add(a);
+            using var pr = Process.Start(psi)!;
+            string outp = pr.StandardOutput.ReadToEnd();
+            pr.WaitForExit();
+            foreach (var raw in outp.Split('\n'))
+            {
+                var line = raw.Trim();
+                if (line.Length == 0 || seen.Contains(line)) continue;
+                seen.Add(line);
+                int i = line.LastIndexOf(':');
+                if (i <= 0) continue;
+                var hashPart = line.Substring(0, i); var pw = line.Substring(i + 1);
+                var parsed = Hc22000Parser.Parse(hashPart);
+                if (parsed.Count == 0) continue;
+                var pt = parsed[0];
+                var match = targets.FirstOrDefault(t => t.ApMacStr == pt.ApMacStr) ?? pt;
+                OnFound?.Invoke(match, pw);
+            }
+        }
+        catch { }
     }
 
     void ParseStatus(string line)
@@ -112,7 +148,7 @@ public class HashcatRunner
                 var parsed = Hc22000Parser.Parse(hashPart);
                 if (parsed.Count == 0) continue;
                 var pt = parsed[0];
-                var match = targets.FirstOrDefault(t => t.ApMacStr == pt.ApMacStr && t.Essid == pt.Essid) ?? pt;
+                var match = targets.FirstOrDefault(t => t.ApMacStr == pt.ApMacStr) ?? pt;
                 OnFound?.Invoke(match, pw);
             }
         }
